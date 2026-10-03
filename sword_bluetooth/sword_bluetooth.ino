@@ -4,8 +4,8 @@
 //  The ESP32 pretends to be a Bluetooth mouse + keyboard. Pair it with
 //  the Mac like any Bluetooth mouse. Then:
 //    - Turn / tilt the sword          -> mouse moves (camera looks around)
-//    - Swing the sword hard           -> left click (attack)
-//    - Hold it sideways and still     -> hold right click (shield blocks)
+//    - Swing the sword                -> left click (basic attack)
+//    - Swing it REALLY hard           -> right click (special attack)
 //    - Push the joystick              -> hold W A S D (walk)
 //    - Press the joystick down        -> hold Space (jump)
 //
@@ -66,10 +66,27 @@ const unsigned long LOOK_FREEZE_MS = 400;  // ...and for this long after a swing
 const float SWING_THRESHOLD = 22.0;       // bigger = need a harder swing (still = 9.8)
 const unsigned long SWING_COOLDOWN = 350; // ms between swings, so 1 swing = 1 hit
 
-// TWO ATTACKS: side slash = left click (basic), overhead chop = right click (special).
-// Each swing prints which gyro axis it spun around, e.g. "swing axis: z".
-// Do a few overhead chops, see which letter shows up, and put it here.
+// TWO ATTACKS: left click = basic attack, right click = special attack.
+// How the sword decides which one:
+//   SPECIAL_MODE 1 = HARD SWING. Normal swing = left click, a really hard
+//                    swing = right click. Works no matter how the sensor
+//                    is mounted. (default)
+//   SPECIAL_MODE 2 = DIRECTION. Side slash = left click, overhead chop =
+//                    right click. Needs SPECIAL_AXIS set (see below).
+const int SPECIAL_MODE = 1;
+
+// Mode 1: every swing prints its "force". Swing normally a few times and
+// hard a few times, then set this between the two numbers you see.
+const float SPECIAL_THRESHOLD = 40.0;
+
+// Mode 2: every swing prints "axis: x/y/z". Do a few overhead chops and
+// put the letter they show here.
 const char SPECIAL_AXIS = 'x';
+
+// How long to hold right click for the special attack (ms). Some special
+// moves need right click held a moment, not just tapped.
+const unsigned long SPECIAL_HOLD_MS = 200;
+
 const unsigned long SWING_WINDOW_MS = 120; // how long to watch a swing before deciding its type
 
 const bool USE_GUARD = false;             // block pose holds right click; off because right click = special attack
@@ -89,7 +106,9 @@ Adafruit_MPU6050 mpu;
 unsigned long lastSwing = 0;
 bool inSwing = false;
 unsigned long swingStart = 0;
-float peakX = 0, peakY = 0, peakZ = 0;
+float peakX = 0, peakY = 0, peakZ = 0, peakTotal = 0;
+bool specialHeld = false;
+unsigned long specialReleaseAt = 0;
 unsigned long guardStart = 0;
 bool guarding = false;
 
@@ -197,7 +216,7 @@ void loop() {
   if (!inSwing && total > SWING_THRESHOLD && now - lastSwing > SWING_COOLDOWN) {
     inSwing = true;
     swingStart = now;
-    peakX = peakY = peakZ = 0;
+    peakX = peakY = peakZ = peakTotal = 0;
     guarding = false;
     guardStart = 0;
   }
@@ -205,21 +224,36 @@ void loop() {
     peakX = max(peakX, (float)fabs(gx));
     peakY = max(peakY, (float)fabs(gy));
     peakZ = max(peakZ, (float)fabs(gz));
+    peakTotal = max(peakTotal, total);
     if (now - swingStart > SWING_WINDOW_MS) {
       char axis = (peakX >= peakY && peakX >= peakZ) ? 'x' : (peakY >= peakZ) ? 'y' : 'z';
-      bool special = (axis == SPECIAL_AXIS);
+      bool special = (SPECIAL_MODE == 1) ? (peakTotal > SPECIAL_THRESHOLD)
+                                         : (axis == SPECIAL_AXIS);
       inSwing = false;
       lastSwing = now;
       if (connected) {
-        setRightClick(false);
-        Mouse.click(special ? MOUSE_RIGHT : MOUSE_LEFT);
+        if (special) {
+          Mouse.press(MOUSE_RIGHT);          // hold right click for a moment
+          specialHeld = true;
+          specialReleaseAt = now + SPECIAL_HOLD_MS;
+        } else {
+          Mouse.click(MOUSE_LEFT);
+        }
       }
       if (!PRINT_GYRO) {
         Serial.print(special ? "SPECIAL ATTACK (right click)" : "ATTACK (left click)");
-        Serial.print("   swing axis: ");
+        Serial.print("   force: ");
+        Serial.print(peakTotal, 1);
+        Serial.print("   axis: ");
         Serial.println(axis);
       }
     }
+  }
+
+  // Let go of the special attack's right click when its time is up
+  if (specialHeld && (long)(now - specialReleaseAt) >= 0) {
+    if (connected) Mouse.release(MOUSE_RIGHT);
+    specialHeld = false;
   }
 
   // ---- GUARD -> hold right click ----
@@ -278,7 +312,7 @@ void loop() {
   // ---- Send it all to the computer ----
   if (connected) {
     if (moveX != 0 || moveY != 0) Mouse.move(clampMove(moveX), clampMove(moveY));
-    setRightClick(guarding);
+    if (USE_GUARD) setRightClick(guarding);   // only when blocking is on, so it can't cancel the special attack
     setKey(heldW, fb == 1, 'w');
     setKey(heldS, fb == -1, 's');
     setKey(heldD, lr == 1, 'd');
