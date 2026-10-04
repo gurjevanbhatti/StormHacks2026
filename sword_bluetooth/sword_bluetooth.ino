@@ -16,6 +16,9 @@ const unsigned long holdTime = 400;
 const int gyroDeadzone = 700;
 const int gyroSensitivity = 800;
 
+const float jumpThreshold = 22000.0;
+const unsigned long jumpCooldown = 700;
+
 bool alreadySwung = false;
 
 char xKey = 0;
@@ -25,6 +28,7 @@ bool joyButtonDown = false;
 bool holdTriggered = false;
 
 unsigned long joyPressTime = 0;
+unsigned long lastJump = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -124,11 +128,21 @@ void loop() {
 
   if (currentSwingForce > swingThreshold && !alreadySwung) {
     Mouse.click(MOUSE_LEFT);
-
     alreadySwung = true;
 
   } else if (currentSwingForce < swingThreshold - 3000) {
     alreadySwung = false;
+  }
+
+  if (abs(AcZ) > jumpThreshold &&
+      abs(AcX) < swingThreshold &&
+      millis() - lastJump > jumpCooldown) {
+
+    Keyboard.press(' ');
+    delay(40);
+    Keyboard.release(' ');
+
+    lastJump = millis();
   }
 
   Wire.beginTransmission(MPU_ADDR);
