@@ -2,7 +2,7 @@
 #include <BleCombo.h>
 
 const int MPU_ADDR = 0x68;
-const float swingThreshold = 15000.0;
+const float swingThreshold = 19000.0;
 
 const int joyX = 34;
 const int joyY = 35;
@@ -12,11 +12,12 @@ const int lowThreshold = 900;
 const int highThreshold = 3100;
 
 const unsigned long holdTime = 400;
+const unsigned long doubleTapTime = 250;
 
 const int gyroDeadzone = 700;
 const int gyroSensitivity = 800;
 
-const float jumpThreshold = 22000.0;
+const float jumpThreshold = 28000.0;
 const unsigned long jumpCooldown = 700;
 
 bool alreadySwung = false;
@@ -25,9 +26,11 @@ char xKey = 0;
 char yKey = 0;
 
 bool joyButtonDown = false;
-bool holdTriggered = false;
+bool rightHeld = false;
+bool waitingForSecondTap = false;
 
 unsigned long joyPressTime = 0;
+unsigned long firstTapTime = 0;
 unsigned long lastJump = 0;
 
 void setup() {
@@ -92,27 +95,45 @@ void loop() {
 
   if (joyState == LOW && !joyButtonDown) {
     joyButtonDown = true;
-    holdTriggered = false;
     joyPressTime = millis();
   }
 
-  if (joyState == LOW && joyButtonDown && !holdTriggered) {
+  if (joyState == LOW && joyButtonDown && !rightHeld) {
     if (millis() - joyPressTime >= holdTime) {
-      Keyboard.press('x');
-      delay(40);
-      Keyboard.release('x');
-
-      holdTriggered = true;
+      Mouse.press(MOUSE_RIGHT);
+      rightHeld = true;
+      waitingForSecondTap = false;
     }
   }
 
   if (joyState == HIGH && joyButtonDown) {
-    if (!holdTriggered) {
-      Mouse.click(MOUSE_RIGHT);
+    if (rightHeld) {
+      Mouse.release(MOUSE_RIGHT);
+      rightHeld = false;
+    } else {
+      if (waitingForSecondTap &&
+          millis() - firstTapTime <= doubleTapTime) {
+
+        Keyboard.press('x');
+        delay(40);
+        Keyboard.release('x');
+
+        waitingForSecondTap = false;
+
+      } else {
+        waitingForSecondTap = true;
+        firstTapTime = millis();
+      }
     }
 
     joyButtonDown = false;
-    holdTriggered = false;
+  }
+
+  if (waitingForSecondTap &&
+      millis() - firstTapTime > doubleTapTime) {
+
+    Mouse.click(MOUSE_RIGHT);
+    waitingForSecondTap = false;
   }
 
   Wire.beginTransmission(MPU_ADDR);
@@ -124,13 +145,12 @@ void loop() {
   int16_t AcY = Wire.read() << 8 | Wire.read();
   int16_t AcZ = Wire.read() << 8 | Wire.read();
 
-  float currentSwingForce = abs(AcX);
-
-  if (currentSwingForce > swingThreshold && !alreadySwung) {
+  if (AcX < -swingThreshold && !alreadySwung) {
     Mouse.click(MOUSE_LEFT);
     alreadySwung = true;
+  }
 
-  } else if (currentSwingForce < swingThreshold - 3000) {
+  if (AcX > -12000) {
     alreadySwung = false;
   }
 
