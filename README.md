@@ -1,4 +1,4 @@
-# Motion Sword
+# NICHIRIN BLADE
 
 A motion-controlled Minecraft sword built for StormHacks. Swing a real (foam) sword and your character attacks in Minecraft. Built for Demon Slayer mode: a side slash does the basic attack and an overhead chop does the special attack. Turn the sword to look around, and use the thumb joystick on the handle to walk and jump.
 
